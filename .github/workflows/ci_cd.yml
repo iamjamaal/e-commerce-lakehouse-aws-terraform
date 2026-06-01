@@ -1,0 +1,176 @@
+
+# Lakehouse ETL — CI/CD Pipeline 
+
+# This workflow runs on every push to the main branch and performs:
+#   1. Code quality checks (flake8 linting)
+#   2. Unit tests (pytest with PySpark + Delta Lake)
+#   3. Terraform plan + apply (infrastructure provisioning)
+#   4. Deploy Glue ETL scripts to S3
+
+name: Lakehouse ETL CI/CD
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  TF_WORKING_DIR: terraform
+
+jobs:
+
+  # ── Stage 1: Lint ────────────────────────────────────────────────────
+  lint:
+    name: Lint (flake8)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install linting dependencies
+        run: pip install flake8
+
+      - name: Run flake8
+        run: |
+          flake8 etl/ config/ tests/ \
+            --max-line-length=120 \
+            --ignore=E501,W503 \
+            --count --statistics
+
+  # ── Stage 2: Test ────────────────────────────────────────────────────
+  test:
+    name: Test (pytest + PySpark)
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Java 11 (required by PySpark)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          PYTHONPATH=. pytest tests/ -v --tb=short --no-header
+
+  # ── Stage 3: Terraform Plan + Apply ──────────────────────────────────
+  terraform:
+    name: Terraform (Infrastructure)
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -var-file=environments/dev/terraform.tfvars -out=tfplan -no-color
+        continue-on-error: false
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+  # ── Stage 4: Deploy ETL Scripts to S3 ────────────────────────────────
+  deploy-scripts:
+    name: Deploy Glue ETL Scripts
+    runs-on: ubuntu-latest
+    needs: terraform
+    if: github.ref == 'refs/heads/main'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Package ETL + config into one zip — Glue's zipimport requires both packages
+      # and needs __init__.py in each directory to treat them as importable packages.
+      - name: Package ETL modules
+        run: |
+          zip -r etl.zip etl/ config/ \
+            --exclude "*/__pycache__/*" \
+            --exclude "*.pyc"
+
+      # Get the scripts bucket name from Terraform output
+      - name: Get infrastructure outputs
+        id: tf_output
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -input=false
+          echo "scripts_bucket=$(terraform output -raw scripts_bucket_name)" >> $GITHUB_OUTPUT
+
+      - name: Upload ETL scripts to S3
+        run: |
+          BUCKET="${{ steps.tf_output.outputs.scripts_bucket }}"
+
+          # Upload individual job scripts (Glue references these as script_location)
+          aws s3 sync etl/ s3://${BUCKET}/etl/ \
+            --delete \
+            --exclude "*/__pycache__/*" \
+            --exclude "*.pyc"
+
+          # Upload the packaged zip (etl/ + config/ for Glue --extra-py-files)
+          aws s3 cp etl.zip s3://${BUCKET}/etl.zip
+
+          # Upload Lambda archive function
+          zip -j lambda_archive.zip lambda/archive_raw_files.py
+          aws s3 cp lambda_archive.zip s3://${BUCKET}/lambda/archive_raw_files.zip
+
+          echo "ETL scripts deployed to s3://${BUCKET}/"

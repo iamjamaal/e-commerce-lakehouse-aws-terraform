@@ -1,0 +1,57 @@
+{
+  "archived_bucket_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "lakehouse-dev-834424012278-archived"
+  },
+  "athena_workgroup": {
+    "sensitive": false,
+    "type": "string",
+    "value": "lakehouse-dev-workgroup"
+  },
+  "dwh_bucket_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "lakehouse-dev-834424012278-dwh"
+  },
+  "glue_database_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "lakehouse_dev_dwh"
+  },
+  "order_items_glue_job_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "lakehouse-dev-etl-order-items"
+  },
+  "orders_glue_job_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "lakehouse-dev-etl-orders"
+  },
+  "products_glue_job_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "lakehouse-dev-etl-products"
+  },
+  "raw_bucket_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "lakehouse-dev-834424012278-raw"
+  },
+  "scripts_bucket_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "lakehouse-dev-834424012278-glue-scripts"
+  },
+  "sns_topic_arn": {
+    "sensitive": false,
+    "type": "string",
+    "value": "arn:aws:sns:us-east-1:834424012278:lakehouse-dev-pipeline-alerts"
+  },
+  "state_machine_arn": {
+    "sensitive": false,
+    "type": "string",
+    "value": "arn:aws:states:us-east-1:834424012278:stateMachine:lakehouse-dev-etl-pipeline"
+  }
+}

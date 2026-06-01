@@ -1,0 +1,24 @@
+# Core dependencies for the Lakehouse ETL pipeline
+#
+# PySpark and Delta Lake are the backbone of the ETL jobs.
+# In a production AWS Glue environment, these are pre-installed,
+# but we pin them here for local development and CI/CD testing.
+
+# Spark engine — must match the version deployed on AWS Glue
+pyspark==3.5.1
+
+# Delta Lake — provides ACID transactions, merge/upsert, time travel
+delta-spark==3.1.0
+
+# Excel file reading (used by s3_utils.read_excel_from_s3)
+openpyxl==3.1.5
+pandas>=2.0.0
+
+# Testing
+pytest==8.2.2
+
+# Linting (used in CI/CD)
+flake8==7.1.0
+
+# AWS SDK (used by deploy scripts and archive_raw_file in production)
+boto3>=1.34.0

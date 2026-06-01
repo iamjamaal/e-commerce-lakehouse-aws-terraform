@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Terraform — never commit provider binaries or local state
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraform.lock.hcl
+terraform_outputs.json
+
+# Built artifacts
+etl.zip
+lambda_archive.zip
+libs/
+
+# Local dev
+.env
+*.log
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

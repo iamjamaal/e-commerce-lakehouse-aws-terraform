@@ -1,0 +1,252 @@
+{
+  "Comment": "Lakehouse ETL Pipeline — Orchestrates parallel Glue jobs, archival, crawling, and Athena validation. Resource names are injected by Terraform templatefile().",
+  "StartAt": "DetectNewFiles",
+  "States": {
+
+    "DetectNewFiles": {
+      "Comment": "Pass-through state that captures the trigger metadata. In production, the EventBridge event payload (which S3 key was created) flows through here.",
+      "Type": "Pass",
+      "Result": {
+        "raw_bucket": "${raw_bucket}",
+        "archived_bucket": "${archived_bucket}",
+        "datasets": ["products", "orders", "order_items"]
+      },
+      "Next": "RunGlueJobsParallel"
+    },
+
+    "RunGlueJobsParallel": {
+      "Comment": "Run all three ETL jobs in parallel. Each branch has its own retry and catch logic so a single dataset failure doesn't block the others during error investigation.",
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "RunProductsETL",
+          "States": {
+            "RunProductsETL": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "${products_job_name}"
+              },
+              "TimeoutSeconds": 600,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 30,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "ProductsJobFailed",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "End": true
+            },
+            "ProductsJobFailed": {
+              "Type": "Fail",
+              "Cause": "Products Glue ETL job failed after retries.",
+              "Error": "ProductsETLError"
+            }
+          }
+        },
+        {
+          "StartAt": "RunOrdersETL",
+          "States": {
+            "RunOrdersETL": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "${orders_job_name}"
+              },
+              "TimeoutSeconds": 600,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 30,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "OrdersJobFailed",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "End": true
+            },
+            "OrdersJobFailed": {
+              "Type": "Fail",
+              "Cause": "Orders Glue ETL job failed after retries.",
+              "Error": "OrdersETLError"
+            }
+          }
+        },
+        {
+          "StartAt": "RunOrderItemsETL",
+          "States": {
+            "RunOrderItemsETL": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "${order_items_job_name}"
+              },
+              "TimeoutSeconds": 900,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 30,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "OrderItemsJobFailed",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "End": true
+            },
+            "OrderItemsJobFailed": {
+              "Type": "Fail",
+              "Cause": "Order Items Glue ETL job failed after retries.",
+              "Error": "OrderItemsETLError"
+            }
+          }
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandlePipelineFailure",
+          "ResultPath": "$.parallelError"
+        }
+      ],
+      "Next": "ArchiveRawFiles"
+    },
+
+    "ArchiveRawFiles": {
+      "Comment": "Invoke Lambda to move raw files from the landing zone to the archive zone, organized by date.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${archive_lambda_name}",
+        "Payload": {
+          "source_bucket": "${raw_bucket}",
+          "archive_bucket": "${archived_bucket}",
+          "datasets": ["products", "orders", "order_items"]
+        }
+      },
+      "TimeoutSeconds": 120,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 10,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "RunGlueCrawler"
+    },
+
+    "RunGlueCrawler": {
+      "Comment": "Update the Glue Data Catalog so Athena can see new/updated Delta table schemas and partitions.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+      "Parameters": {
+        "Name": "${crawler_name}"
+      },
+      "TimeoutSeconds": 300,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "CrawlerWarning",
+          "ResultPath": "$.crawlerError"
+        }
+      ],
+      "Next": "WaitForCrawler"
+    },
+
+    "CrawlerWarning": {
+      "Comment": "Crawler failure is non-critical. Data is already in Delta tables and can be queried directly.",
+      "Type": "Pass",
+      "Result": {
+        "warning": "Glue Crawler failed — Data Catalog may be stale."
+      },
+      "Next": "ValidateWithAthena"
+    },
+
+    "WaitForCrawler": {
+      "Comment": "Give the crawler time to finish before running validation queries.",
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "ValidateWithAthena"
+    },
+
+    "ValidateWithAthena": {
+      "Comment": "Smoke test: run a COUNT(*) on each table to confirm data is present and queryable.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+      "Parameters": {
+        "QueryString": "SELECT 'dim_products' as tbl, COUNT(*) as cnt FROM ${athena_database}.dim_products UNION ALL SELECT 'fact_orders', COUNT(*) FROM ${athena_database}.fact_orders UNION ALL SELECT 'fact_order_items', COUNT(*) FROM ${athena_database}.fact_order_items",
+        "WorkGroup": "${athena_workgroup}",
+        "ResultConfiguration": {
+          "OutputLocation": "${athena_results_loc}"
+        }
+      },
+      "TimeoutSeconds": 120,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "AthenaValidationWarning",
+          "ResultPath": "$.athenaError"
+        }
+      ],
+      "Next": "PipelineSucceeded"
+    },
+
+    "AthenaValidationWarning": {
+      "Type": "Pass",
+      "Result": {
+        "warning": "Athena validation query failed — data may still be correct. Investigate manually."
+      },
+      "Next": "PipelineSucceeded"
+    },
+
+    "PipelineSucceeded": {
+      "Type": "Succeed"
+    },
+
+    "HandlePipelineFailure": {
+      "Comment": "Publish failure details to SNS for the on-call data engineer.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_topic_arn}",
+        "Subject": "Lakehouse ETL Pipeline FAILED",
+        "Message.$": "States.Format('Pipeline failed with error: {}', $.parallelError)"
+      },
+      "Next": "PipelineFailed"
+    },
+
+    "PipelineFailed": {
+      "Type": "Fail",
+      "Cause": "One or more ETL jobs failed. See SNS notification for details.",
+      "Error": "PipelineExecutionError"
+    }
+  }
+}

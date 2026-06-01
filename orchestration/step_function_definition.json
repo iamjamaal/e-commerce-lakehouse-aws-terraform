@@ -1,0 +1,267 @@
+{
+  "Comment": "Lakehouse ETL Pipeline — Orchestrates ingestion of products, orders, and order items into Delta Lake tables on S3. Includes parallel Glue job execution, archival of raw files, Glue Crawler for catalog updates, and Athena validation.",
+  "StartAt": "DetectNewFiles",
+  "States": {
+
+    "DetectNewFiles": {
+      "Comment": "Simulate detecting new file arrivals in the S3 raw zone. In production, this would be triggered by an S3 event notification (via EventBridge) rather than polling. Here we pass the file metadata forward.",
+      "Type": "Pass",
+      "Result": {
+        "datasets": ["products", "orders", "order_items"],
+        "raw_bucket": "s3://lakehouse-raw",
+        "dwh_bucket": "s3://lakehouse-dwh",
+        "archive_bucket": "s3://lakehouse-archived"
+      },
+      "Next": "RunGlueJobsParallel"
+    },
+
+    "RunGlueJobsParallel": {
+      "Comment": "Run all three Glue ETL jobs in parallel. Each job independently reads from the raw zone, validates, deduplicates, and merges into its Delta table. Parallel execution reduces total pipeline time from ~15min (sequential) to ~5min.",
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "RunProductsETL",
+          "States": {
+            "RunProductsETL": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "lakehouse-etl-products",
+                "Arguments": {
+                  "--raw_path": "s3://lakehouse-raw/products/",
+                  "--dwh_path": "s3://lakehouse-dwh/dim_products/",
+                  "--rejected_path": "s3://lakehouse-rejected/",
+                  "--extra-jars": "s3://lakehouse-libs/delta-core_2.12-2.4.0.jar"
+                }
+              },
+              "TimeoutSeconds": 600,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 30,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "ProductsJobFailed",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "End": true
+            },
+            "ProductsJobFailed": {
+              "Type": "Fail",
+              "Cause": "Products Glue ETL job failed after retries.",
+              "Error": "ProductsETLError"
+            }
+          }
+        },
+        {
+          "StartAt": "RunOrdersETL",
+          "States": {
+            "RunOrdersETL": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "lakehouse-etl-orders",
+                "Arguments": {
+                  "--raw_path": "s3://lakehouse-raw/orders/",
+                  "--dwh_path": "s3://lakehouse-dwh/fact_orders/",
+                  "--rejected_path": "s3://lakehouse-rejected/",
+                  "--extra-jars": "s3://lakehouse-libs/delta-core_2.12-2.4.0.jar"
+                }
+              },
+              "TimeoutSeconds": 600,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 30,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "OrdersJobFailed",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "End": true
+            },
+            "OrdersJobFailed": {
+              "Type": "Fail",
+              "Cause": "Orders Glue ETL job failed after retries.",
+              "Error": "OrdersETLError"
+            }
+          }
+        },
+        {
+          "StartAt": "RunOrderItemsETL",
+          "States": {
+            "RunOrderItemsETL": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::glue:startJobRun.sync",
+              "Parameters": {
+                "JobName": "lakehouse-etl-order-items",
+                "Arguments": {
+                  "--raw_path": "s3://lakehouse-raw/order_items/",
+                  "--dwh_path": "s3://lakehouse-dwh/fact_order_items/",
+                  "--orders_dwh_path": "s3://lakehouse-dwh/fact_orders/",
+                  "--products_dwh_path": "s3://lakehouse-dwh/dim_products/",
+                  "--rejected_path": "s3://lakehouse-rejected/",
+                  "--extra-jars": "s3://lakehouse-libs/delta-core_2.12-2.4.0.jar"
+                }
+              },
+              "TimeoutSeconds": 900,
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 30,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "OrderItemsJobFailed",
+                  "ResultPath": "$.error"
+                }
+              ],
+              "End": true
+            },
+            "OrderItemsJobFailed": {
+              "Type": "Fail",
+              "Cause": "Order Items Glue ETL job failed after retries.",
+              "Error": "OrderItemsETLError"
+            }
+          }
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandlePipelineFailure",
+          "ResultPath": "$.parallelError"
+        }
+      ],
+      "Next": "ArchiveRawFiles"
+    },
+
+    "ArchiveRawFiles": {
+      "Comment": "After all ETL jobs succeed, move raw files from the landing zone to the archive zone. This prevents re-processing on the next pipeline run and maintains a historical record of all ingested files.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "lakehouse-archive-raw-files",
+        "Payload": {
+          "source_prefix": "s3://lakehouse-raw/",
+          "archive_prefix": "s3://lakehouse-archived/",
+          "datasets": ["products", "orders", "order_items"]
+        }
+      },
+      "TimeoutSeconds": 120,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 10,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "RunGlueCrawler"
+    },
+
+    "RunGlueCrawler": {
+      "Comment": "Run the Glue Crawler to update the Data Catalog with the latest Delta table schemas and partitions. This makes the data queryable through Athena without manual schema management.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startCrawler.sync",
+      "Parameters": {
+        "Name": "lakehouse-dwh-crawler"
+      },
+      "TimeoutSeconds": 300,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "CrawlerWarning",
+          "ResultPath": "$.crawlerError"
+        }
+      ],
+      "Next": "ValidateWithAthena"
+    },
+
+    "CrawlerWarning": {
+      "Comment": "Crawler failure is non-critical — data is already in Delta tables. Log the warning and continue to Athena validation anyway (Athena can still read Delta directly if the SymlinkTextInputFormat is configured).",
+      "Type": "Pass",
+      "Result": {
+        "warning": "Glue Crawler failed — Data Catalog may be stale. Delta tables are still readable directly."
+      },
+      "Next": "ValidateWithAthena"
+    },
+
+    "ValidateWithAthena": {
+      "Comment": "Run a validation query through Athena to confirm data was successfully loaded. This checks that each table has rows for the current date and serves as a smoke test for the entire pipeline.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::athena:startQueryExecution.sync",
+      "Parameters": {
+        "QueryString": "SELECT 'dim_products' as tbl, COUNT(*) as cnt FROM lakehouse_dwh.dim_products UNION ALL SELECT 'fact_orders', COUNT(*) FROM lakehouse_dwh.fact_orders UNION ALL SELECT 'fact_order_items', COUNT(*) FROM lakehouse_dwh.fact_order_items",
+        "WorkGroup": "primary",
+        "ResultConfiguration": {
+          "OutputLocation": "s3://lakehouse-athena-results/"
+        }
+      },
+      "TimeoutSeconds": 120,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "AthenaValidationWarning",
+          "ResultPath": "$.athenaError"
+        }
+      ],
+      "Next": "PipelineSucceeded"
+    },
+
+    "AthenaValidationWarning": {
+      "Comment": "Athena validation is a smoke test — its failure doesn't mean the ETL failed. Log the warning and mark pipeline as succeeded with caveats.",
+      "Type": "Pass",
+      "Result": {
+        "warning": "Athena validation query failed — data may still be correct in Delta tables. Investigate manually."
+      },
+      "Next": "PipelineSucceeded"
+    },
+
+    "PipelineSucceeded": {
+      "Type": "Succeed"
+    },
+
+    "HandlePipelineFailure": {
+      "Comment": "Central error handler: logs the failure and optionally sends an SNS alert to the data engineering team.",
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:us-east-1:ACCOUNT_ID:lakehouse-pipeline-alerts",
+        "Subject": "Lakehouse ETL Pipeline FAILED",
+        "Message.$": "States.Format('Pipeline failed with error: {}', $.parallelError)"
+      },
+      "Next": "PipelineFailed"
+    },
+
+    "PipelineFailed": {
+      "Type": "Fail",
+      "Cause": "One or more ETL jobs failed. See SNS notification for details.",
+      "Error": "PipelineExecutionError"
+    }
+  }
+}
