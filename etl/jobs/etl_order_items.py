@@ -16,12 +16,12 @@ Pipeline steps:
 """
 
 import sys
-from delta.tables import DeltaTable
-from pyspark.sql import functions as F
+sys.path.insert(0, ".")  # Must precede local imports when run outside Glue
 
-sys.path.insert(0, ".")
+from delta.tables import DeltaTable  # noqa: E402
+from pyspark.sql import functions as F  # noqa: E402
 
-from config.settings import (
+from config.settings import (  # noqa: E402
     RAW_ORDER_ITEMS_PATH,
     DWH_ORDER_ITEMS_PATH,
     DWH_ORDERS_PATH,
@@ -31,10 +31,10 @@ from config.settings import (
     ORDER_ITEMS_PARTITION_COL,
     MAX_REJECT_RATIO,
 )
-from etl.utils.spark_session import get_spark_session
-from etl.utils.s3_utils import read_csv_from_s3, write_delta_table
-from etl.utils.logger import get_logger, log_step, log_job_start, log_job_end
-from etl.validation.rules import (
+from etl.utils.spark_session import get_spark_session  # noqa: E402
+from etl.utils.s3_utils import read_csv_from_s3, write_delta_table  # noqa: E402
+from etl.utils.logger import get_logger, log_step, log_job_start, log_job_end  # noqa: E402
+from etl.validation.rules import (  # noqa: E402
     validate_not_null,
     validate_timestamp_format,
     validate_referential_integrity,

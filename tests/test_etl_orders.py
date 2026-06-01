@@ -5,12 +5,10 @@ Verifies the orders pipeline handles timestamp validation, amount validation,
 deduplication with recency ordering, and Delta merge with date partitioning.
 """
 
-import os
 import shutil
 import tempfile
 import pytest
 from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
 
 
 @pytest.fixture(scope="session")
@@ -82,8 +80,8 @@ class TestOrdersETLIntegration:
             for i in range(1, 21)
         ]
         invalid_rows = [
-            (21, 10021, 121, "2025-04-01T11:00:00", -50.0,  "2025-04-01"),
-            (22, 10022, 122, "2025-04-01T12:00:00",   0.0,  "2025-04-01"),
+            (21, 10021, 121, "2025-04-01T11:00:00", -50.0, "2025-04-01"),
+            (22, 10022, 122, "2025-04-01T12:00:00", 0.0, "2025-04-01"),
         ]
         df = spark.createDataFrame(
             valid_rows + invalid_rows,
