@@ -83,12 +83,12 @@ module "glue" {
   environment = var.environment
   project     = var.project
 
-  glue_role_arn      = module.iam.glue_role_arn
-  scripts_bucket     = module.s3.scripts_bucket_name
-  raw_bucket         = module.s3.raw_bucket_name
-  dwh_bucket         = module.s3.dwh_bucket_name
-  rejected_bucket    = module.s3.rejected_bucket_name
-  dwh_bucket_path    = "s3://${module.s3.dwh_bucket_name}/"
+  glue_role_arn   = module.iam.glue_role_arn
+  scripts_bucket  = module.s3.scripts_bucket_name
+  raw_bucket      = module.s3.raw_bucket_name
+  dwh_bucket      = module.s3.dwh_bucket_name
+  rejected_bucket = module.s3.rejected_bucket_name
+  dwh_bucket_path = "s3://${module.s3.dwh_bucket_name}/"
 }
 
 
@@ -137,9 +137,9 @@ module "eventbridge" {
   environment = var.environment
   project     = var.project
 
-  raw_bucket_name        = module.s3.raw_bucket_name
-  state_machine_arn      = module.step_functions.state_machine_arn
-  eventbridge_role_arn   = module.iam.eventbridge_role_arn
+  raw_bucket_name      = module.s3.raw_bucket_name
+  state_machine_arn    = module.step_functions.state_machine_arn
+  eventbridge_role_arn = module.iam.eventbridge_role_arn
 }
 
 

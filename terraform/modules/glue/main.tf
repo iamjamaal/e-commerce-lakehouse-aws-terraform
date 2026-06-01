@@ -41,15 +41,15 @@ resource "aws_glue_job" "products" {
 
   # Use Glue 4.0 native Delta Lake support (avoids JAR/Python version mismatch)
   default_arguments = {
-    "--datalake-formats"              = "delta"
-    "--extra-py-files"                = "s3://${var.scripts_bucket}/etl.zip"
-    "--raw_path"                      = "s3://${var.raw_bucket}/products/"
-    "--dwh_path"                      = "s3://${var.dwh_bucket}/dim_products/"
-    "--rejected_path"                 = "s3://${var.rejected_bucket}/"
-    "--enable-metrics"                = "true"
+    "--datalake-formats"                 = "delta"
+    "--extra-py-files"                   = "s3://${var.scripts_bucket}/etl.zip"
+    "--raw_path"                         = "s3://${var.raw_bucket}/products/"
+    "--dwh_path"                         = "s3://${var.dwh_bucket}/dim_products/"
+    "--rejected_path"                    = "s3://${var.rejected_bucket}/"
+    "--enable-metrics"                   = "true"
     "--enable-continuous-cloudwatch-log" = "true"
-    "--job-language"                  = "python"
-    "--TempDir"                       = "s3://${var.scripts_bucket}/temp/"
+    "--job-language"                     = "python"
+    "--TempDir"                          = "s3://${var.scripts_bucket}/temp/"
   }
 
   glue_version      = "4.0"
@@ -76,22 +76,22 @@ resource "aws_glue_job" "orders" {
   }
 
   default_arguments = {
-    "--datalake-formats"              = "delta"
-    "--extra-py-files"                = "s3://${var.scripts_bucket}/etl.zip"
-    "--raw_path"                      = "s3://${var.raw_bucket}/orders/"
-    "--dwh_path"                      = "s3://${var.dwh_bucket}/fact_orders/"
-    "--rejected_path"                 = "s3://${var.rejected_bucket}/"
-    "--enable-metrics"                = "true"
+    "--datalake-formats"                 = "delta"
+    "--extra-py-files"                   = "s3://${var.scripts_bucket}/etl.zip"
+    "--raw_path"                         = "s3://${var.raw_bucket}/orders/"
+    "--dwh_path"                         = "s3://${var.dwh_bucket}/fact_orders/"
+    "--rejected_path"                    = "s3://${var.rejected_bucket}/"
+    "--enable-metrics"                   = "true"
     "--enable-continuous-cloudwatch-log" = "true"
-    "--job-language"                  = "python"
-    "--TempDir"                       = "s3://${var.scripts_bucket}/temp/"
+    "--job-language"                     = "python"
+    "--TempDir"                          = "s3://${var.scripts_bucket}/temp/"
   }
 
   glue_version      = "4.0"
   worker_type       = "G.1X"
   number_of_workers = var.glue_worker_count
   timeout           = 15
-  
+
   execution_property {
     max_concurrent_runs = 1
   }
@@ -113,17 +113,17 @@ resource "aws_glue_job" "order_items" {
   }
 
   default_arguments = {
-    "--datalake-formats"              = "delta"
-    "--extra-py-files"                = "s3://${var.scripts_bucket}/etl.zip"
-    "--raw_path"                      = "s3://${var.raw_bucket}/order_items/"
-    "--dwh_path"                      = "s3://${var.dwh_bucket}/fact_order_items/"
-    "--orders_dwh_path"               = "s3://${var.dwh_bucket}/fact_orders/"
-    "--products_dwh_path"             = "s3://${var.dwh_bucket}/dim_products/"
-    "--rejected_path"                 = "s3://${var.rejected_bucket}/"
-    "--enable-metrics"                = "true"
+    "--datalake-formats"                 = "delta"
+    "--extra-py-files"                   = "s3://${var.scripts_bucket}/etl.zip"
+    "--raw_path"                         = "s3://${var.raw_bucket}/order_items/"
+    "--dwh_path"                         = "s3://${var.dwh_bucket}/fact_order_items/"
+    "--orders_dwh_path"                  = "s3://${var.dwh_bucket}/fact_orders/"
+    "--products_dwh_path"                = "s3://${var.dwh_bucket}/dim_products/"
+    "--rejected_path"                    = "s3://${var.rejected_bucket}/"
+    "--enable-metrics"                   = "true"
     "--enable-continuous-cloudwatch-log" = "true"
-    "--job-language"                  = "python"
-    "--TempDir"                       = "s3://${var.scripts_bucket}/temp/"
+    "--job-language"                     = "python"
+    "--TempDir"                          = "s3://${var.scripts_bucket}/temp/"
   }
 
   glue_version      = "4.0"

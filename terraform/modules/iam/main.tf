@@ -81,7 +81,7 @@ resource "aws_iam_role_policy" "glue_s3" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:DeleteObject",  # Delta Lake needs delete for VACUUM and log compaction
+          "s3:DeleteObject", # Delta Lake needs delete for VACUUM and log compaction
           "s3:ListBucket",
         ]
         Resource = [
