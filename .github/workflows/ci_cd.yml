@@ -79,6 +79,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     if: github.ref == 'refs/heads/main'
+    outputs:
+      scripts_bucket: ${{ steps.tf_outputs.outputs.scripts_bucket }}
 
     permissions:
       id-token: write
@@ -115,12 +117,27 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
+      # Phase 1: create S3 buckets so the Lambda zip has somewhere to land
+      - name: Terraform Apply (S3 buckets)
+        run: terraform apply -target=module.s3 -var-file=environments/dev/terraform.tfvars -auto-approve
+
+      # Seed the Lambda deployment package before the full apply tries to create the function
+      - name: Seed Lambda deployment package
+        run: |
+          zip -j lambda_archive.zip ../lambda/archive_raw_files.py
+          aws s3 cp lambda_archive.zip \
+            s3://$(terraform output -raw scripts_bucket_name)/lambda/archive_raw_files.zip
+
+      # Phase 2: plan + apply the rest of the infrastructure
       - name: Terraform Plan
-        run: terraform plan -var-file=environments/dev/terraform.tfvars -out=tfplan -no-color
-        continue-on-error: false
+        run: terraform plan -var-file=environments/dev/terraform.tfvars -no-color
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -var-file=environments/dev/terraform.tfvars -auto-approve
+
+      - name: Capture Terraform outputs
+        id: tf_outputs
+        run: echo "scripts_bucket=$(terraform output -raw scripts_bucket_name)" >> $GITHUB_OUTPUT
 
   # ── Stage 4: Deploy ETL Scripts to S3 ────────────────────────────────
   deploy-scripts:
@@ -151,17 +168,9 @@ jobs:
             --exclude "*/__pycache__/*" \
             --exclude "*.pyc"
 
-      # Get the scripts bucket name from Terraform output
-      - name: Get infrastructure outputs
-        id: tf_output
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform init -input=false
-          echo "scripts_bucket=$(terraform output -raw scripts_bucket_name)" >> $GITHUB_OUTPUT
-
       - name: Upload ETL scripts to S3
         run: |
-          BUCKET="${{ steps.tf_output.outputs.scripts_bucket }}"
+          BUCKET="${{ needs.terraform.outputs.scripts_bucket }}"
 
           # Upload individual job scripts (Glue references these as script_location)
           aws s3 sync etl/ s3://${BUCKET}/etl/ \
