@@ -2,7 +2,6 @@
 
 A production-grade Lakehouse architecture for an e-commerce platform on AWS. The system ingests raw transactional data from Amazon S3, validates and deduplicates it using PySpark and Delta Lake via AWS Glue, and exposes clean data for analytics through Amazon Athena — all triggered automatically by EventBridge and orchestrated by AWS Step Functions.
 
-**Deployed:** AWS account `834424012278`, region `us-east-1`  
 **Infrastructure:** 47 Terraform-managed resources  
 **Tests:** 28 pytest tests, 100% passing
 
